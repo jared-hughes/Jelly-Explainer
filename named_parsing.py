@@ -1,7 +1,16 @@
-import jelly
 from jelly import *
 
+# NOTE: This still has indentation issues
+
 from wikis import quicks_wiki, atoms_wiki, quicks_tail
+#quicks_tail to be used to format quicks like so:
+#  Ternary if
+#  <condition>
+#     ...
+#  <if-clause>
+#     ...
+#  <else-clause>
+#     ...
 
 for k in quicks:
 	quicks[k].token = k
@@ -70,16 +79,25 @@ def mono_literal_equivalent(mono_literal):
 		evaled = "'" + evaled + "'"
 	return str(evaled)
 
+def chainsep_title(token):
+	assert token in chain_separators.keys()
+	value = chain_separators[token]
+	return "Start a new "+['nil','mon','dy'][value[0]]+"adic chain"+(" with reversed arguments" if not value[1] else "")
+
 def name(token):
-	if token in atoms_wiki:
+	if len(token) == 0:
+		return ""
+	elif token in atoms_wiki:
 		return atoms_wiki[token]
 	elif token in quicks_wiki:
 		return quicks_wiki[token]
+	elif token in str_arities:
+		return chainsep_title(token)
 	else:
 		return literal_title(token)
 
 def token_attrdict(ls):
-	assert type(ls) in [str,list]
+	assert type(ls) in [str,list,attrdict]
 	if type(ls) == str:
 		if ls in quicks:
 			return quicks[ls]
@@ -91,36 +109,48 @@ def token_attrdict(ls):
 			return create_literal(regex_liter.sub(parse_literal, ls))
 	elif type(ls) == list:
 		return [token_attrdict(k) for k in ls]
+	elif type(ls) == attrdict:
+		return token_attrdict(ls.token)
 
 
 # structure derived from Jelly's parse_code() function.
-def parse_code_named2(code):
-	lines = regex_flink.findall(code)
+regex_token_sep = re.compile(str_nonlits + "|" + str_litlist + "|[" + str_arities +"]|")
+def parse_code_named(code):
+	lines_match = regex_flink.finditer(code)
+	lines = list(lines_match)
+	lines_str = [line.group(0) for line in lines]
+	lines_match = regex_flink.finditer(code)
 	links = [[] for line in lines]
-	for index, line in enumerate(lines):
+	for index, line_match in enumerate(lines_match):
+		line = line_match.group(0)
 		chains = links[index]
-		for word in regex_chain.findall(line):
+		for word_match in regex_chain.finditer(line):
+			word = word_match.group(0)
 			chain = []
-			arity, isForward = chain_separators.get(word[0], default_chain_separation)
-			for token in regex_token.findall(word):
+			for match in regex_token_sep.finditer(word):
+				token = match.group(0)
+				token_span = attrdict(token=token, span=match.span(), word_start=word_match.start(), line_len = len(line), name=name(token))
+				if not len(token):
+					break;
 				if token in atoms:
-					chain.append(token)
+					chain.append(token_span)
 				elif token in quicks:
 					popped = []
 					while not quicks[token].condition([token_attrdict(k) for k in popped]) and (chain or chains):
 						popped.insert(0, chain.pop() if chain else chains.pop())
-						#print(popped)
-					chain.append([popped, token])
+					chain.append([popped, token_span])
 				elif token in hypers:
-					x = chain.pop() if chain else chains.pop()
-					chain.append(token)
+					chain.append(token_span)
 				else:
-					chain.append(token)
+					chain.append(token_span)
 			chains.append(chain)
-	return (links, lines)
+	return (links, lines_str)
+
 
 def order(tokens):
 	if type(tokens) in (list,tuple):
+		# system to order more naturally e.g. ABC? -> ?CAB [if C then A else B].
+		# Improve based on quick? Future difficulty: "/" could have two definitions
 		if len(tokens)==0:
 			return []
 		if len(tokens)==1:
@@ -129,6 +159,8 @@ def order(tokens):
 			return [order(tokens[~0]),order(tokens[~1])]
 		if len(tokens)==3:
 			return [order(tokens[~0]),order(tokens[~2]),order(tokens[~1])]
+	elif type(tokens) == attrdict:
+		return tokens
 	else:
 		return tokens
 
@@ -139,19 +171,22 @@ def order_ranking(ranking):
 		for chain in link:
 			o = []
 			for token_seq in chain:
-				for k in order(token_seq):
-					o.append(k)
-				#o.append(order(token_seq))
-				#o.append(token_seq)
+				ordered = order(token_seq)
+				if type(ordered) == attrdict:
+					o.append(ordered)
+				else:
+					for k in order(token_seq):
+						o.append(k)
 			p.append(o)
 		out.append(p)
 	return out
 
 def explain_token(token):
-	assert type(token) in [str, list, tuple]
+	assert type(token) in [str, list, tuple, attrdict]
 	if type(token) == str:
-		#if token in quicks
-		return [name(token)]
+		return [token, name(token)]
+	elif type(token) == attrdict:
+		return token
 	elif type(token) in [list, tuple]:
 		o = []
 		for tok in token:
@@ -159,31 +194,43 @@ def explain_token(token):
 			o+=[e]
 		return o
 
+def filter_out(ls, element):
+	if type(ls) == list:
+		return [filter_out(k, element) for k in ls if k!=element]
+	else:
+		return ls
+
+def form_neat(ranking):
+	if type(ranking) == attrdict:
+		return "name: "+ranking.name
+	else:
+		return [form_neat(k) for k in ranking]
 
 def explain(code):
-	ranking, lines = parse_code_named2(code)
-	lines.reverse()
+	ranking, lines = parse_code_named(code)
+	#print("RANKING: ",ranking)
+	ranking = filter_out(ranking, [])
 	ranking = order_ranking(ranking)
-	#out = flatten(out)
+	#print("RANKING: ",ranking)
 	explanation = []
-	for line in ranking:
+	# Iteration form not pythonic but necessary to append lines from parse_code_named. Maybe interleave instead?
+	for line_num in range(len(ranking)):
+		line = ranking[line_num]
+		explanation.append(lines[line_num])
 		for chain in line:
 			explanation.append(explain_token(chain))
-	print(explanation)
-	renders = []
-
 	return render(explanation)
 
-	return explanation
-	return ranking
-
-# render(k) => newline-separated lines.
-def render(ordered):
-	assert type(ordered) in [str, list, tuple]
+def render(ordered,bufferadd=0,join="\n\n"):
+	assert type(ordered) in [str, list, tuple, attrdict]
 	if type(ordered) in [list, tuple]:
-		return '\n'.join(["\n".join(["  "+a for a in render(k).split("\n")]) for k in ordered])
-	if type(ordered) == str:
+		# this looks and is horrible. TODO:Change
+		return re.sub(r"(\n\n[^\n]+\n)\n",r"\1",join.join(["\n".join([a for a in render(k,bufferadd+2,"\n").split("\n")]) for k in ordered]))
+	elif type(ordered) == str:
 		return ordered
+	elif type(ordered) == attrdict:
+		start = ordered.span[0]+ordered.word_start
+		return " "*(start)+ordered.token+" "*(ordered.line_len-start-len(ordered.token))+" "*bufferadd+ordered.name+"   "
 
 test_string = """3,µ+5µ7C
 01P?2S?+3
@@ -198,6 +245,7 @@ CN$
 SƤ
 S€"""
 
+test_string = "01P?2S?+3"
 
-print(order_ranking(parse_code_named2(test_string)[0]))
 print(explain(test_string))
+k = attrdict(a=5, b=3, c=1)
