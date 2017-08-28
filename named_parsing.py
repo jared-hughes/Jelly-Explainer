@@ -5,11 +5,11 @@ from jelly import *
 from wikis import quicks_wiki, atoms_wiki, quicks_tail
 #quicks_tail to be used to format quicks like so:
 #  Ternary if
-#  <condition>
+#    <condition>
 #     ...
-#  <if-clause>
+#   <if-clause>
 #     ...
-#  <else-clause>
+#   <else-clause>
 #     ...
 
 for k in quicks:
@@ -112,6 +112,11 @@ def token_attrdict(ls):
 	elif type(ls) == attrdict:
 		return token_attrdict(ls.token)
 
+def indent_deepest(ls):
+	if type(ls) == list:
+		return [indent_deepest(k) for k in ls]
+	ls.indentation += 2
+	return ls
 
 # structure derived from Jelly's parse_code() function.
 regex_token_sep = re.compile(str_nonlits + "|" + str_litlist + "|[" + str_arities +"]|")
@@ -129,7 +134,7 @@ def parse_code_named(code):
 			chain = []
 			for match in regex_token_sep.finditer(word):
 				token = match.group(0)
-				token_span = attrdict(token=token, span=match.span(), word_start=word_match.start(), line_len = len(line), name=name(token))
+				token_span = attrdict(token=token, span=match.span(), word_start=word_match.start(), line_len = len(line), name=name(token), indentation=0)
 				if not len(token):
 					break;
 				if token in atoms:
@@ -138,6 +143,8 @@ def parse_code_named(code):
 					popped = []
 					while not quicks[token].condition([token_attrdict(k) for k in popped]) and (chain or chains):
 						popped.insert(0, chain.pop() if chain else chains.pop())
+					popped = indent_deepest(popped)
+					#token_span = indent_deepest(token_span)
 					chain.append([popped, token_span])
 				elif token in hypers:
 					chain.append(token_span)
@@ -208,10 +215,10 @@ def form_neat(ranking):
 
 def explain(code):
 	ranking, lines = parse_code_named(code)
-	#print("RANKING: ",ranking)
+	print("RANKING: ",ranking)
 	ranking = filter_out(ranking, [])
 	ranking = order_ranking(ranking)
-	#print("RANKING: ",ranking)
+	print("RANKING: ",ranking)
 	explanation = []
 	# Iteration form not pythonic but necessary to append lines from parse_code_named. Maybe interleave instead?
 	for line_num in range(len(ranking)):
@@ -221,16 +228,18 @@ def explain(code):
 			explanation.append(explain_token(chain))
 	return render(explanation)
 
-def render(ordered,bufferadd=0,join="\n\n"):
-	assert type(ordered) in [str, list, tuple, attrdict]
-	if type(ordered) in [list, tuple]:
+def render(ordered,join="\n\n"):
+	assert type(ordered) in [str, list, attrdict]
+	if type(ordered) == list:
 		# this looks and is horrible. TODO:Change
-		return re.sub(r"(\n\n[^\n]+\n)\n",r"\1",join.join(["\n".join([a for a in render(k,bufferadd+2,"\n").split("\n")]) for k in ordered]))
+		lines = ["\n".join(   [a for a in render(k,"\n").split("\n")]   ) for k in ordered]
+		o = join.join(lines)
+		return re.sub(r"(\n\n[^\n]+\n)\n",r"\1",o)
 	elif type(ordered) == str:
 		return ordered
 	elif type(ordered) == attrdict:
 		start = ordered.span[0]+ordered.word_start
-		return " "*(start)+ordered.token+" "*(ordered.line_len-start-len(ordered.token))+" "*bufferadd+ordered.name+"   "
+		return " "*(start)+ordered.token+" "*(ordered.line_len-start-len(ordered.token))+" "*ordered.indentation+"    "+ordered.name
 
 test_string = """3,µ+5µ7C
 01P?2S?+3
@@ -244,8 +253,6 @@ CN$
 +/
 SƤ
 S€"""
-
-test_string = "01P?2S?+3"
 
 print(explain(test_string))
 k = attrdict(a=5, b=3, c=1)
